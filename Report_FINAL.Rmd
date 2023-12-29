@@ -1,0 +1,1569 @@
+---
+title: "Predicting MLB Team Win Percent and Playoff Status (1997-2016)"
+authors: "Eashan Kaw, Michael Macfarlan, Wyatt Scott, Victor Teelucksingh"
+output: 
+  html_document:
+    theme:
+      version: 4
+---
+
+### Group 3:
+#### Eashan Kaw, Michael Macfarlan, Wyatt Scott, Victor Teelucksingh
+
+```{r include=FALSE}
+library(tidyverse)
+library(Lahman)
+library(leaps)
+library(ROCR)
+library(MASS)
+library(gridExtra)
+library(glmulti)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(viridis)
+library(hrbrthemes)
+library(corrplot)
+library(GGally)
+library(lares)
+library(tidymodels)
+library(kernlab)
+library(pracma)
+library(reshape2)
+library(car)
+library(qqplotr)
+library(ggpubr)
+library(grid)
+library(gridGraphics)
+library(patchwork)
+library(knitr)
+library(kableExtra)
+```
+
+## 1. Executive summary
+
+This project explored the ability to predict a Major League Baseball (MLB) team's win percentage and playoff status using baseball stats from 1997 through 2016 from the Lahman Baseball Database. This group intended to focus, in particular, on variables that a team owner or manager could have some level of influence over, either by offensive strategy decisions, defensive strategy decisions, player stats to focus on when making signing decisions, or other intentional strategies. The intention was to create predictive models for use in real-world decision-making scenarios for team managers and owners to improve outcomes. Right from the beginning, the objectives of this group may seem similar to those outlined in Michael Lewis' renowned book, [Moneyball]{.underline}. However, the group delved further into the subject matter, expanding the focus to identify other crucial variables that could inform team owners' and managers' decisions and improve outcomes.
+
+The Lahman Baseball database contains several team and player statistics across MLB seasons from 1871 to 2021. In our work, we pre-processed, then combined several tables from the database, including Teams, Salaries, and SeriesPost tables, to create a final dataframe with several useful variables. While exploring the datasets, this working group inspected, calculated, and combined these variables to create useful predictors in a single dataframe. 
+
+The group's first question of interest explored which team stats are the most useful for accurately predicting a team's winning percentage for the seasons spanning 1997 to 2016. Starting with exploratory data analysis using data visualizations, this working group began to form hypotheses, then put these to the test by constructing and testing a high-performing linear regression model.
+
+In summary, the variables that were both influential and statistically significant enough to make it into our predictive model were (in order of influence) fielding percentage, on-base percentage, steal percentage, saves, home runs allowed, home runs, walks allowed, outs pitched, strikeouts by pitchers, and strikeouts by batters. On-base percentage and field percentage stand out as the most influential predictors. For every percentage point increase in OBP, the team's win percentage increases by an estimated 1.95%, and for every percentage point increase in field percentage, the team's win percentage increases by an estimated 2.23%, assuming all other variables remain constant.
+
+The group's second question of interest explored the ability to successfully predict a team's ability to make it to the playoffs based on a handful of predictor variables. Again, by starting with analyzing the data with visualizations, the group was able to begin to understand relationships between variables, test hypotheses about those relationships, and eventually create a high-performing logistic regression model. We trained the final model using observations from the 1997 through 2015 seasons, then tested it on data from the 2016 season. It achieved an accuracy of 86.67% in testing.
+
+During this team's work, we discovered the most powerful predictor for a team making it to the playoffs was the team's On-base Percentage (OBP) -- how frequently a team's batters reach base per plate appearance. In our research, this group discovered that for every additional percentage point increase in OBP, the estimated odds of that team progressing to the playoffs is multiplied by an estimated 3.49, assuming all other variables remain constant.
+
+Our analysis confirms that both our models meet all necessary statistical criteria for validity. This means that these models are reliable in predicting team success both in win percentage and prediction of playoff appearance because the relationships between the predictor variables and response variables are not simply due to chance or flawed experimentation. Nevertheless, it is important to note the nuances associated with this group's work.
+
+First, since our data spans the years from 1997 to 2016, these models' reliability is limited to this time frame, and to use it for analysis outside of this timeframe, one must also consider changes that may occur in the rules of MLB baseball, trending team strategy changes, regulation changes in the sport (and so on) that may have an impact on model performance. The second notable nuance to consider is that one could argue that creating separate and unique observations for each team-year combination potentially violates the independence assumption if, for example, a team were to employ a successful strategy across multiple years. Correcting for this level of nuance falls outside of the scope of this project but is an important characteristic to consider.
+
+Although there are nuances to the models created in our research, this group is confident that these models would be useful to MLB team owners and managers in making trustworthy predictions that would be useful in real-world decision-making scenarios. While it is important to recognize limitations, it is also important to remind ourselves that no model is perfect, and the ability to predict a Major League Baseball (MLB) team's win percentage and playoff status using known stats can be a powerful tool if taken advantage of properly.
+
+---
+
+## 2. Data description:
+
+### a. Data source
+
+**The final dataframes we use to fit our models, *Data_Teamsln* and *Data_Teams*, cover the 1997 through 2016 seasons and treat each team-season combination as individual observations.**
+
+Data for this project come from the Lahman Baseball Database, an R package containing several team and player statistics across MLB seasons from 1871 to 2021. The database is named after the creator, Sean Lahman, and now a team of researchers maintains it. It covers a broad range of information and, as a relational database, has links across different tables with unique codes (e.g., playerID).
+
+We combine several tables from the database, including:
+
+-   Teams -- Annual statistics and standings for teams.
+
+-   Salaries -- Player salary data.
+
+-   SeriesPost -- postseason series information.
+
+We use the Teams table as our main data frame. In addition, we use the Salaries table to create a variable for total spend **`(Spend)`** per team by summing player salaries for each team and each season; and the SeriesPost table to create the binary variable **`(playoffs)`** for logistic regression: 0 if a team did not make it to the postseason, and 1 if a team did make it to the postseason.
+
+In addition to merging these three tables, we create variables to combine predictors and reduce model complexity.
+
+-   Team batting average **`(Bavg)`** = Hits / At Bats
+
+-   Winning percentage **`(WinP)`** = Wins / Games
+
+-   On Base Percentage **`(OBP)`** = (Hits + Walks + Hit by Pitch) / (At Bats + Walks + Hit by Pitch + Sacrifice Flies)
+
+### b. Variable descriptions
+
+```{r message=FALSE, echo=FALSE}
+variables<-read_csv("variables.csv")
+variables_tibble<-as_tibble(variables)
+variables_tibble2<-variables_tibble %>%
+  filter(!row_number() %in% c(55))
+
+variables_tibble2 %>% print(n = nrow(variables_tibble2))
+```
+
+---
+
+## 3. First question of interest involving linear regression
+
+### a. Introduction:
+
+#### i. First question of interest
+
+Which team stats are useful for accurately predicting a team's winning percentage for the seasons spanning 1997 to 2016?
+
+#### ii. Why it's worth exploring this question
+
+Considering a team owner's perspective, are there any predictors a team can develop to improve the outcome of its season? The book [Moneyball]{.underline} by Michael Lewis documents how Oakland Athletics' General Manager Billy Beane emphasized the importance of OBP over many other stats when considering which players to sign. There was a focus on finding players that could "get on base." Our first question of interest expands that line of thinking to consider if there are other so-called 'low-hanging fruit' or predictors that significantly impact a team's winning percentage. Exploring unexpected predictors may provide interesting insights for this question, which we will examine in the EDA. For example, does the number of left-handed hitters on a team or average team height correlate with the winning percentage or improve our predictive model? Additionally, knowing whether money predicts success, however indirect or unknown the mechanism of its impact, is an object of general interest for owners, league officials, and spectators, even if determining its causal impact is outside the scope of this study. These are qualities that make the question worth exploring.
+
+### b. Data Visualizations:
+
+```{r include=FALSE}
+#Import Teams table from Lahman's Baseball package
+Data_Teams<-(Teams)
+
+    #Reduce to 1997 - 2016
+Data_Teams<-Data_Teams %>% 
+  filter(yearID %in% (1997:2016))
+
+    #Create teamdID+yearID
+Data_Teams$team_yr_ID<- paste(Data_Teams$teamID,Data_Teams$yearID)
+
+    #Filter out unnecessary variables
+Data_Teams<-subset(Data_Teams, select = -c(Ghome, WSWin, WCWin, DivWin, name, franchID, 
+                                           park, BPF, PPF, teamIDBR, teamIDretro, teamIDlahman45, 
+                                           attendance, LgWin, Rank))
+
+    #Add on base percentage
+Data_Teams<-Data_Teams %>% 
+  mutate(OBP = (H + BB + HBP) / (AB + BB + HBP + SF))
+
+    #Create Winning Percentage
+Data_Teams<-Data_Teams %>% 
+  mutate(WinP = W / (W+L))
+
+    #Create Successful Steals Percent
+Data_Teams<-Data_Teams %>% 
+  mutate(StealP = (SB/(SB+CS)))
+
+#Import Salaries table from Lahman's Baseball package to create Spend variable
+Data_sal<-Lahman::Salaries
+
+    #Filter to 1997 - 2016
+Data_sal<-Data_sal %>% 
+  filter(yearID %in% (1997:2016))
+
+    #Calculate total salary by team for 1997 - 2016
+Total_spend<-Data_sal %>% 
+  group_by(yearID, teamID) %>% 
+  summarize(Spend = sum(salary))
+
+    #Create teamdID+yearID
+Total_spend$team_yr_ID<- paste(Total_spend$teamID,Total_spend$yearID)
+
+    #Remove yearID and teamID
+Total_spend<-subset(Total_spend, select = -c (yearID, teamID))
+
+#Join Spend with Data_Teams
+Data_Teams<-inner_join(Data_Teams, Total_spend, by=c('team_yr_ID' = 'team_yr_ID'))
+
+    #Change League ID to factor
+Data_Teams$lgID<-as.factor(Data_Teams$lgID)
+
+    #Change Division ID to factor
+Data_Teams$divID<-as.factor(Data_Teams$divID)
+
+    #Create lgID divID concat
+Data_Teams$lgIDdivID <- paste(Data_Teams$lgID, Data_Teams$divID)
+
+    #Change League ID / Division ID concat to factor
+Data_Teams$lgIDdivID<-as.factor(Data_Teams$lgIDdivID)
+
+    #Filter out unnecessary variables
+Data_Teams<-subset(Data_Teams, select = -c(R, RA, BB, HBP, AB, SF, W, L, CG, CS, 
+                                           SB, H, G, SHO, ER, HA, ERA, X2B, X3B, E))
+    #Change Spend to millions
+Data_Teams$Spend<-Data_Teams$Spend/1000000
+
+#Create separate df for Linear Models
+Data_Teamsln<-Data_Teams
+
+Data_Teamsln<-subset(Data_Teamsln, select = -c(yearID))
+
+#Create separate df for visuals
+Data_Teams_viz<-Data_Teams
+
+#Create separate df for correlation table with only numeric variables
+df_cors<-Data_Teamsln
+df_cors<-subset(df_cors, select=-c(lgID, teamID, divID, team_yr_ID, lgIDdivID))
+correlation_mat<-data.frame(round(cor(df_cors),2))
+```
+
+#### i. Data-wrangling
+
+Several data-wrangling processes were necessary to produce visualizations for this section. First, we imported the *Teams* table from the *Lahman* package to create our main dataframe, *Data_Teams*. We then filtered the dataframe to seasons between 1997 and 2016 using the `filter` function on the **`yearID`** column. At this stage of the data-wrangling process, *Data_Teams* had 49 variables. We significantly reduce this number by removing unnecessary variables, including:
+
+-   **`Ghome`**: The number of home games played.
+
+-   **`WSWin`**: A factor-type variable for whether a team won the World Series.
+
+-   **`WCWin`**: A factor-type variable for whether a team is a Wild Card winner.
+
+-   **`DivWin`**: A factor-type variable for whether a team won its division.
+
+-   **`name`**: The name of the team.
+
+-   **`franchID`**: An identifier for franchise name.
+
+-   **`park`**: The name of the team's home stadium.
+
+-   **`BPF`**: Three-year park factor for batters.
+
+-   **`PPF`**: There-year park factor for pitchers.
+
+-   **`teamIBDR`**: Another team identifier for a certain website.
+
+-   **`teamIDretro`**: Another team identifier for an older version of the database.
+
+-   **`teamIDlahman45`**: Another team identifier for an older version of the database.
+
+-   **`attendance`**: Home attendance total.
+
+-   **`LgWin`**: An factor-type variable for whether the team won their league.
+
+-   **`Rank`**: A team's position in the final standings for a given season.
+
+This reduced the *Data_Teams* dataframe to 34 variables. We further reduced *Data_Teams* based on certain assumptions that are contextually dependent on our question of interest and based on a review of the relevant literature. Further, we combined several of the indicator variables as explained below.
+
+We created a unique identifier for each team and season combination, **`team_year_ID`**, and calculated each observation's **`OBP`**, **`WinP`**, and **`StealP`** and added these variables to *Data_Teams*.
+
+With these newly created variables, we further reduced the *Data_Teams* dataframe to avoid overfitting our models.
+
+-  We removed **`H`**, **`BB`**, **`HBP`**, **`AB`**, and **`SF`**, given that **`OBP`** effectively combines these variables into a single metric using the formula (**`H`** + **`BB`** + **`HBP`**) / (**`AB`** + **`BB`** + **`HBP`** + **`SF`**).
+-   We removed **`W`**, **`L`**, **`CG`**, and **`G`**, given that **`WinP`** combines these using the formula (**`W`** / (**`W`** + **`L`**)).
+-  We removed **`SB`** and **`CS`**, given that **`StealP`** combines these using the formula (**`SB`** / (**`SB`** + **`CS`**)).
+-  We removed **`SHO`** because shutouts (e.g., the opponent scores no runs) may be too closely related to winning percentage (you win a game with a shutout). This predictor may dominate other predictors in determining win percentage.
+
+At this point in the data-wrangling process, the *Data_Teams* dataframe has 25 variables. We further reduce *Data_Teams* using several techniques. For example, we used the `corr_cross` function from the *lares* package to create a horizontal bar chart measuring the correlation between predictor variables to examine multicollinearity issues. This initial plot shows that **`E`** and **`FP`** are almost perfectly negatively correlated at -.988. We chose to drop **`E`** as a predictor and retain **`FP`** based on the findings of James, M., and Wells, A. (2008). In short, **`FP`** is a more comprehensive metric for team defensive performance. The initial correlation bar chart also shows that **`ER`** and **`ERA`** are highly positively correlated with **`HA`**. This makes sense contextually given that the number of earned runs allowed and earned run average would increase alongside the number of hits allowed. Along similar lines, **`ER`** and **`ERA`** are highly positively correlated with **`HRA`**, which also makes sense, given that more home runs allowed would mean more earned runs and a higher earned run average. For these reasons, we removed **`ER`**, **`ERA`**, and **`HA`**.
+
+At this point in the data-wrangling process, there are 20 variables, including our response variable, in the *Data_Teams* dataframe. Now that we have significantly reduced our dataframe, we created a second horizontal bar chart using the `corr_cross` function from the *lares* package to examine if there are other highly correlated indicators that we should consider removing. This second correlation bar chart shows that **`X2B`** and **`OBP`** are positively correlated. This makes sense, given that a batter hitting a double would advance that batter onto base (second base). Based on Pinheiro, R. and Szymanski, S. (2022) and the context of our question of interest, we chose not to include **`X2B`** and **`X3B`**; double and triples are relatively rare events and thus not a proper measure of player (or, in the case of this study, team) offensive ability. The breakdown of the rate of occurrence for each of these is listed below.
+
+Percent of **`AB`** for the 1997-2016 seasons (*these do not sum to 100%; batters can strikeout or be hit by a pitch*):
+
+-   **`H`:** 26.20%
+
+-   **`X2B`:** 5.20%
+
+-   **`X3B`:** 0.55%
+
+-   **`HR`:** 3.04%
+
+-   **`BB`:** 9.52%
+
+The next step in wrangling the data for our linear regression visualizations, and the models, was to import the *Salaries* table to create the *Data_sal* dataframe. We then used the `filter` function to include only seasons between 1997 and 2016. We then created a vector, *Spend*, from the *Data_sal* dataframe and used the `group_by` function to group by **`yearID`** and **`teamID`** and the `summarize` function to sum the salaries of each observation, creating the **`Spend`** variable. We then used the `paste` function to create the **`team_yr_ID`** column for this vector. Finally, we used the `subset` function to remove **`yearID`** and **`teamID`**.
+
+We combined the *Total_spend* vector with the *Data_Teams* dataframe using the `inner_join` function based on **`team_year_ID`**.
+
+At this point in the data-wrangling process, *Data_Teams* has 13 variables, including the response variable, **`WinP`**.
+
+#### ii. Data visualizations
+
+```{r echo=FALSE}
+correlation_mat %>%
+  kbl(caption = "Figure 1.a Correlation Matrix") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+The table above shows the correlations of all variables used to develop our models.
+
+```{r echo=FALSE, message=FALSE}
+ggplot(Data_Teams_viz, aes(y=WinP))+
+  geom_histogram(fill="#232d4b", color="#eb5f0c")+
+  coord_flip()+
+  labs(x="Count of team-year combinations", y="Win Percent",
+       title="Figure 1.b: Distribution of team-year combinations by Win Percent")+
+  theme(plot.title = element_text(face = "bold", hjust = 0),
+        plot.subtitle = element_text(face ="italic", hjust = 0),
+        plot.caption = element_text(face = "bold", hjust = 0),
+        axis.title.x = element_text(face = "bold"),
+        axis.title.y = element_text(face = "bold"),
+        axis.text.x = element_text(face = "bold"),
+        axis.text.y = element_text(face = "bold"),
+        legend.position = "none")
+```
+
+Figure 1.b is a histogram of **`WinP`** for the 1997-2016 seasons. Although the histogram shows that **`WinP`** does not follow a perfect standard normal distribution, it does tell us that the observations in our dataframe generally follow a bell-shaped curve in terms of **`WinP`**.
+
+```{r echo=FALSE}
+scatt_1<-Data_Teams_viz %>%
+  ggplot(aes(x=Spend, y=WinP, color=lgIDdivID))+
+  geom_point(alpha=0.5, size=0.6)+
+  geom_smooth(formula = y ~ x, method = "lm", se=FALSE, alpha=0.5, linewidth=0.6)+
+  labs(x="Spend", y="Win Percent", title= 'Spend', color="divIDlgID")+
+  theme_linedraw()+
+  theme(axis.text.y=element_blank(), axis.ticks.x=element_blank(), axis.ticks.y=element_blank(),
+        plot.title=element_text(size=12, face='bold', hjust=0.5), axis.title.y=element_blank(),
+        axis.title.x=element_text(size=8, face='bold', hjust=0.5))
+
+scatt_2<-Data_Teams_viz %>%
+  ggplot(aes(x=OBP, y=WinP, color=lgIDdivID))+
+  geom_point(alpha=0.5, size=0.6)+
+  geom_smooth(formula = y ~ x, method = "lm", se=FALSE, alpha=0.5, linewidth=0.6)+
+  labs(x="OBP", y="Win Percent", title= 'OBP', color="divIDlgID")+
+  theme_linedraw()+
+  theme(axis.text.y=element_blank(), axis.ticks.x=element_blank(), axis.ticks.y=element_blank(),
+        plot.title=element_text(size=12, face='bold', hjust=0.5), axis.title.y=element_blank(),
+        axis.title.x=element_text(size=8, face='bold', hjust=0.5))
+
+scatt_3<-Data_Teams_viz %>%
+  ggplot(aes(x=SV, y=WinP, color=lgIDdivID))+
+  geom_point(alpha=0.5, size=0.6)+
+  geom_smooth(formula = y ~ x, method = "lm", se=FALSE, alpha=0.5, linewidth=0.6)+
+  labs(x="SV", y="Win Percent", title= 'SV', color="divIDlgID")+
+  theme_linedraw()+
+  theme(axis.text.y=element_blank(), axis.ticks.x=element_blank(), axis.ticks.y=element_blank(),
+        plot.title=element_text(size=12, face='bold', hjust=0.5), axis.title.y=element_blank(),
+        axis.title.x=element_text(size=8, face='bold', hjust=0.5))
+
+scatt_4<-Data_Teams_viz %>%
+  ggplot(aes(x=HR, y=WinP, color=lgIDdivID))+
+  geom_point(alpha=0.5, size=0.6)+
+  geom_smooth(formula = y ~ x, method = "lm", se=FALSE, alpha=0.5, linewidth=0.6)+
+  labs(x="HR", y="Win Percent", title= 'HR', color="divIDlgID")+
+  theme_linedraw()+
+  theme(axis.text.y=element_blank(), axis.ticks.x=element_blank(), axis.ticks.y=element_blank(),
+        plot.title=element_text(size=12, face='bold', hjust=0.5), axis.title.y=element_blank(),
+        axis.title.x=element_text(size=8, face='bold', hjust=0.5))
+
+scatt_5<-Data_Teams_viz %>%
+  ggplot(aes(x=SO, y=WinP, color=lgIDdivID))+
+  geom_point(alpha=0.5, size=0.6)+
+  geom_smooth(formula = y ~ x, method = "lm", se=FALSE, alpha=0.5, linewidth=0.6)+
+  labs(x="SO", y="Win Percent", title= 'SO', color="divIDlgID")+
+  theme_linedraw()+
+  theme(axis.text.y=element_blank(), axis.ticks.x=element_blank(), axis.ticks.y=element_blank(),
+        plot.title=element_text(size=12, face='bold', hjust=0.5), axis.title.y=element_blank(),
+        axis.title.x=element_text(size=8, face='bold', hjust=0.5))
+
+scatt_6<-Data_Teams_viz %>%
+  ggplot(aes(x=IPouts, y=WinP, color=lgIDdivID))+
+  geom_point(alpha=0.5, size=0.6)+
+  geom_smooth(formula = y ~ x, method = "lm", se=FALSE, alpha=0.5, linewidth=0.6)+
+  labs(x="IPouts", y="Win Percent", title= 'IPouts', color="divIDlgID")+
+  theme_linedraw()+
+  theme(axis.text.y=element_blank(), axis.ticks.x=element_blank(), axis.ticks.y=element_blank(),
+        plot.title=element_text(size=12, face='bold', hjust=0.5), axis.title.y=element_blank(),
+        axis.title.x=element_text(size=8, face='bold', hjust=0.5))
+
+scatt_7<-Data_Teams_viz %>%
+  ggplot(aes(x=HRA, y=WinP, color=lgIDdivID))+
+  geom_point(alpha=0.5, size=0.6)+
+  geom_smooth(formula = y ~ x, method = "lm", se=FALSE, alpha=0.5, linewidth=0.6)+
+  labs(x="HRA", y="Win Percent", title= 'HRA', color="divIDlgID")+
+  theme_linedraw()+
+  theme(axis.text.y=element_blank(), axis.ticks.x=element_blank(), axis.ticks.y=element_blank(),
+        plot.title=element_text(size=12, face='bold', hjust=0.5), axis.title.y=element_blank(),
+        axis.title.x=element_text(size=8, face='bold', hjust=0.5))
+
+scatt_8<-Data_Teams_viz %>%
+  ggplot(aes(x=BBA, y=WinP, color=lgIDdivID))+
+  geom_point(alpha=0.5, size=0.6)+
+  geom_smooth(formula = y ~ x, method = "lm", se=FALSE, alpha=0.5, linewidth=0.6)+
+  labs(x="BBA", y="Win Percent", title= 'BBA', color="divIDlgID")+
+  theme_linedraw()+
+  theme(axis.text.y=element_blank(), axis.ticks.x=element_blank(), axis.ticks.y=element_blank(),
+        plot.title=element_text(size=12, face='bold', hjust=0.5), axis.title.y=element_blank(),
+        axis.title.x=element_text(size=8, face='bold', hjust=0.5))
+
+scatt_9<-Data_Teams_viz %>%
+  ggplot(aes(x=SOA, y=WinP, color=lgIDdivID))+
+  geom_point(alpha=0.5, size=0.6)+
+  geom_smooth(formula = y ~ x, method = "lm", se=FALSE, alpha=0.5, linewidth=0.6)+
+  labs(x="SOA", y="Win Percent", title= 'SOA', color="divIDlgID")+
+  theme_linedraw()+
+  theme(axis.text.y=element_blank(), axis.ticks.x=element_blank(), axis.ticks.y=element_blank(),
+        plot.title=element_text(size=12, face='bold', hjust=0.5), axis.title.y=element_blank(),
+        axis.title.x=element_text(size=8, face='bold', hjust=0.5))
+
+scatt_10<-Data_Teams_viz %>%
+  ggplot(aes(x=DP, y=WinP, color=lgIDdivID))+
+  geom_point(alpha=0.5, size=0.6)+
+  geom_smooth(formula = y ~ x, method = "lm", se=FALSE, alpha=0.5, linewidth=0.6)+
+  labs(x="DP", y="Win Percent", title= 'DP', color="divIDlgID")+
+  theme_linedraw()+
+  theme(axis.text.y=element_blank(), axis.ticks.x=element_blank(), axis.ticks.y=element_blank(),
+        plot.title=element_text(size=12, face='bold', hjust=0.5), axis.title.y=element_blank(),
+        axis.title.x=element_text(size=8, face='bold', hjust=0.5))
+
+scatt_11<-Data_Teams_viz %>%
+  ggplot(aes(x=FP, y=WinP, color=lgIDdivID))+
+  geom_point(alpha=0.5, size=0.6)+
+  geom_smooth(formula = y ~ x, method = "lm", se=FALSE, alpha=0.5, linewidth=0.6)+
+  labs(x="FP", y="Win Percent", title= 'FP', color="divIDlgID")+
+  theme_linedraw()+
+  theme(axis.text.y=element_blank(), axis.ticks.x=element_blank(), axis.ticks.y=element_blank(),
+        plot.title=element_text(size=12, face='bold', hjust=0.5), axis.title.y=element_blank(),
+        axis.title.x=element_text(size=8, face='bold', hjust=0.5))
+
+scatt_12<-Data_Teams_viz %>%
+  ggplot(aes(x=StealP, y=WinP, color=lgIDdivID))+
+  geom_point(alpha=0.5, size=0.6)+
+  geom_smooth(formula = y ~ x, method = "lm", se=FALSE, alpha=0.5, linewidth=0.6)+
+  labs(x="StealP", y="Win Percent", title= 'StealP', color="divIDlgID")+
+  theme_linedraw()+
+  theme(axis.text.y=element_blank(), axis.ticks.x=element_blank(), axis.ticks.y=element_blank(),
+        plot.title=element_text(size=12, face='bold', hjust=0.5), axis.title.y=element_blank(),
+        axis.title.x=element_text(size=8, face='bold', hjust=0.5))
+
+#Combine scatterplots 1-6
+combined_scat1<-scatt_1 + scatt_2 + scatt_3 + scatt_4 + scatt_5 + scatt_6
+#Plot scatterplots 1-6
+combined_scat1 + plot_layout(guides="collect") + 
+  plot_annotation(title = 'Figure 1.c: WinP against each Predictor by divIDlgID') & 
+  theme(title = element_text(size=14, face='bold', hjust=0.5), legend.position="right", 
+        legend.text=element_text(size=10), legend.title=element_text(size=12))
+```
+```{r echo=FALSE}
+#Combine scatterplots 7-12
+combined_scat2<-scatt_7 + scatt_8 + scatt_9 + scatt_10 + scatt_11 + scatt_12
+#Plot scatterplots 7-12
+combined_scat2 + plot_layout(guides="collect") + plot_annotation() & 
+  theme(legend.position="right", legend.text=element_text(size=10), 
+        legend.title=element_text(size=12, face='bold'))
+```
+
+Figure 1.c is a combined scatterplot of **`WinP`** against each of the predictors colored by each combination of **`divID`** and **`lgID`** (which we call **`lgIDdivID`**). We used this scatterplot to guide our hypothesis testing for whether to include an interaction term for **`lgIDdivID`** and any of the predictors in our models. The regression lines between each predictor and **`WinP`** appear close to parallel for **`lgIDdivID`** for all predictors except **`HR`**, **`DP`**, **`FP`**, and **`StealP`**.
+
+```{r echo=FALSE}
+plot_ly(data = Data_Teams_viz, z = ~WinP, x = ~SV, y = ~OBP, 
+        color = ~lgIDdivID, opacity = 1) %>%
+  add_markers(marker = list(size = 3)) %>% 
+  layout(title = "Figure 1.d: Impact of SV and OBP on WinP by lgIDdivID")
+```
+
+Figure 1.d is a 3D scatterplot of **`WinP`** against both **`OBP`** and **`SV`** and colored by each **`lgIDdivID`**. We used this scatterplot to assess the relationship between the two predictors we assumed to have the most impact on our response and to help inform our model-building regarding interaction terms. We can see that as both OBP and SV increase, WinP increases.
+
+### c. Model Building:
+
+We ran a few models with interaction terms between **`lgIDdivID`** and each of the predictors identified in Figure 1.c as potentially having an interaction, including **`HR`**, **`DP`**, **`FP`**, and **`StealP`**.
+
+**Testing Interaction Terms**:
+
+None of the t-tests for the interaction terms were significant when including an interaction term between **`HR`** and **`lgIDdivID`** or between **`DP`** and **`lgIDdivID`**. This indicates that the intercepts and slopes for American League East (AL_E), American League West (AL_W), National League Central (NL_C), National League East (NL_E), and National League West (NL_W) are not significantly different from the reference class, American League Central (AL_C), for **`HR`** or **`DP`**. The model summaries for those two models are shown below.
+
+*Note*: American League Central (AL_C) is the reference class for **`lgIDdivID`**.
+
+Model summary with an interaction term between **`lgIDdivID`** and **`HR`**:
+
+```{r echo=FALSE}
+result_int1<-lm(WinP ~ HR*lgIDdivID + SV + SO + IPouts + HRA + BBA + SOA + DP + FP + StealP + Spend, data=Data_Teamsln)
+summary(result_int1)
+```
+
+Model summary with an interaction term between **`lgIDdivID`** and **`DP`**:
+
+```{r echo=FALSE}
+result_int2<-lm(WinP ~ DP*lgIDdivID + SV + HR + IPouts + HRA + BBA + SOA + SO + FP + StealP + Spend, data=Data_Teamsln)
+summary(result_int2)
+```
+
+The t-tests for several interaction terms are statistically significant when running models with interaction terms between **`lgIDdivID`** and **`FP`** and **`lgIDdivID`** and **`StealP`**. 
+
+Model summary with an interaction term between **`lgIDdivID`** and **`FP`**:
+
+```{r echo=FALSE}
+result_int3<-lm(WinP ~ FP*lgIDdivID + SV + HR + IPouts + HRA + BBA + SOA + SO + DP + StealP + Spend, data=Data_Teamsln)
+summary(result_int3)
+
+result_int3_a<-lm(WinP ~ FP + lgIDdivID + SV + HR + IPouts + HRA + BBA + SOA + SO + DP + StealP + Spend, data=Data_Teamsln)
+```
+
+The model summary for the model with interaction between **`lgIDdivID`** and **`FP`** shows that the t-tests for β2 and β17, β3 and β18, β4 and β19, and β6 and β21 are insignificant, which indicates that the intercepts and slopes for American League East (AL_E), American League West (AL_W), National League Central (NL_C), and National League West (NL_W) are not significantly different from the reference class, American League Central (AL_C). However, we note a significant t-test for β5 and β20, or National League East (NL_E). We conduct a partial F-test to determine whether we can drop the interaction terms β17, β18, β19, and β21.
+
+- **Ho**: β17 = β18 = β19 = β21 = 0
+
+- **Ha**: at least one of the coefficients in Ho is not zero
+
+```{r echo=FALSE}
+anova(result_int3_a, result_int3)
+```
+
+The resulting F-statistic is (1.2131), and its associated p-value is high (0.3015). So, we fail to reject our null hypothesis and determine that we can drop the interaction term.
+
+When running models with interaction terms between **`lgIDdivID`** and **`StealP`**, we note that the t-tests for several interaction terms are statistically significant.
+
+Model summary with an interaction term between **`lgIDdivID`** and **`StealP`**:
+
+```{r echo=FALSE}
+result_int4<-lm(WinP ~ StealP*lgIDdivID + SV + HR + IPouts + HRA + BBA + SOA + SO + DP + FP + Spend, data=Data_Teamsln)
+summary(result_int4)
+
+result_int4_a<-lm(WinP ~ StealP+lgIDdivID + SV + HR + IPouts + HRA + BBA + SOA + SO + DP + FP + Spend, data=Data_Teamsln)
+```
+
+Next, we perform a similar partial F-test for the model with interaction between **`lgIDdivID`** and **`StealP`**. The model summary for this model shows insignificant t-tests for β2 and β17, β3 and β18, and β6 and β21, indicating that the intercepts and slopes for American League East (AL_E), American League West (AL_W), and National League West (NL_W) are not significantly different from the reference class, American League Central (AL_C). However, we note a significant t-test for β4 and β19, and β5 and β20, which indicates that the intercepts and slopes for National League Central (NL_C) and National League East (NL_E) are significantly different from American League Central (AL_C). We conduct a partial F-test to determine whether we can drop the interaction terms β17, β18, and β21.
+
+- **Ho**: β17 = β18 = β21 = 0
+
+- **Ha**: at least one of the coefficients in Ho is not zero
+
+```{r echo=FALSE}
+anova(result_int4_a, result_int4)
+```
+
+The resulting F-statistic is (2.205), and its associated p-value is high (0.0524). Although the p-value is very close to significance, it's larger than 0.05, so we fail to reject our null hypothesis and determine that we can drop the interaction term.
+
+After testing interaction terms and determining that we could drop them, we chose to drop **`lgIDdivID`** and fit an initial model, *full_ln*, with all predictors that remained in *Data_Teams*.
+
+Model summary for the *full_ln* model:
+
+```{r echo=FALSE}
+full_ln<-lm(WinP ~  HR + SO + SV + IPouts + HRA + BBA + SOA + FP + OBP + StealP + DP + Spend, data=Data_Teamsln)
+summary(full_ln)
+```
+
+After fitting the *full_ln* model, we examined each predictor's Variance Inflation Factor (VIF). The VIFs, displayed below, are low for all predictors in the *full_ln* model.
+
+```{r echo=FALSE}
+round(vif(full_ln),2)
+```
+
+The model summary for *full_ln*, however, shows that **`DP`** and **`Spend`** are not statistically significant in the presence of the other predictors, so we conduct a partial F-test to determine whether **`DP`** and **`Spend`** have a significant impact on **`WinP`** when controlling for the other predictors in *full_ln*. First, we fit a reduced model, *reduced1_ln*, using all predictors except **`DP`** and **`Spend`**. 
+
+Model summary for the *reduced1_ln* model:
+
+```{r echo=FALSE}
+reduced1_ln<-lm(WinP ~ HR + SO + SV + IPouts+ HRA + BBA + SOA + FP + OBP + StealP, data=Data_Teamsln)
+summary(reduced1_ln)
+```
+
+Next, we used the `anova` function to compare the fit of the *full_ln* model with that of the *reduced1_ln* model.
+
+- **Ho**: β11 = β12 = 0
+
+- **Ha**: at least one of the coefficients in Ho is not 0.
+
+```{r echo=FALSE}
+anova(reduced1_ln, full_ln)
+```
+
+The resulting F-statistic was (0.4316), and its associated p-value is high (0.6497). Given these results, we fail to reject the null hypothesis; the partial F-test suggests that we can drop **`DP`** and **`Spend`** and go with the *reduced1_ln* model.
+
+We then cross-validated our model selection process using Automated Search Procedures based on three criteria: Adjusted R-squared, Bayesian Information Criterion (BIC), and Mallow's CP (cp). Each criterion returned models with the same predictors as *reduced1_ln*. The results are displayed below.
+
+```{r include=FALSE}
+#Remove non-numeric type variables from Data_Teams
+Data_Teamsln<-subset(Data_Teamsln, select=-c(lgID, divID, teamID, team_yr_ID, lgIDdivID))
+
+allreg<-regsubsets(WinP ~ ., data=Data_Teamsln, nbest=2)
+```
+
+Coefficients for the model produced using R-squared adjusted as the criteria:
+
+```{r echo=FALSE}
+coef(allreg, which.max(summary(allreg)$adjr2))
+```
+
+Coefficients for the model produced using AIC adjusted as the criteria:
+
+```{r echo=FALSE}
+coef(allreg, which.min(summary(allreg)$cp))
+```
+
+Coefficients for the model produced using BIC adjusted as the criteria:
+
+```{r echo=FALSE}
+coef(allreg, which.min(summary(allreg)$bic))
+```
+
+#### iii. Recommended linear regression model(s)
+
+We recommend the *reduced1_ln* model because it was the most performant model based on several different statistical assessments, including the partial F-test, and automated search procedure methods based on Adjusted R-squared, Bayesian Information Criterion, and Mallow's CP.
+
+The final equation for the recommended linear regression model is:
+
+$$
+WinP \sim 04.957e^{-04}(HR) - 6.166e^{-05}(SO) + 3.141e^{-03}(SV) + 1.851e^{-04}(IPouts) - 6.828e^{-04}(HRA)\\-2.166e^{-04}(BBA) + 9.075e^{-05}(SOA) + 2.234(FP) + 1.954(OBP) + 6.834e^{-02}(StealP) + \epsilon
+$$
+
+#### iv. Assessing regression assumptions and the presence of influential data points
+
+```{r include=FALSE}
+#Press statistic
+PRESS<-function(linear.model) {
+  ## get the residuals from the linear.model.
+  ## extract hat from lm.influence to obtain the leverages
+  pr<-residuals(linear.model)/(1-lm.influence(linear.model)$hat)
+  ## calculate the PRESS by squaring each term and adding them up
+  PRESS<-sum(pr^2)
+  return(PRESS)
+}
+
+PRESS(reduced1_ln)
+
+##Find SST
+anova_result<-anova(reduced1_ln)
+SST<-sum(anova_result$"Sum Sq")
+
+##R2 pred
+Rsq_pred<-1-PRESS(reduced1_ln)/SST
+Rsq_pred
+
+##residuals, e_i
+res<-reduced1_ln$residuals
+
+##standardized residuals, d_i
+standard.res<-res/summary(reduced1_ln)$sigma
+
+##studentized residuals, r_i
+student.res<-rstandard(reduced1_ln)
+
+##externally studentized residuals, t_i
+ext.student.res<-rstudent(reduced1_ln)
+
+#Outlier Detection
+
+    ##critical value using Bonferroni procedure
+n<-dim(df_cors)[1]
+p<-10
+crit<-qt(1-0.05/(2*n), n-p-1)
+
+    ##identify observations that satisfies the cutoff
+ext.student.res[abs(ext.student.res)>crit]
+
+    ##leverages
+lev<-lm.influence(reduced1_ln)$hat
+    ##identify high leverage points
+lev[lev>2*p/n]
+
+#Influential observations
+
+    ##cooks distance
+COOKS<-cooks.distance(reduced1_ln)
+COOKS[COOKS>qf(0.5,p,n-p)]
+
+    ##dffits
+DFFITS<-dffits(reduced1_ln)
+DFFITS[abs(DFFITS)>2*sqrt(p/n)]
+
+    ##dfbetas
+DFBETAS<-dfbetas(reduced1_ln)
+abs(DFBETAS)>2/sqrt(n)
+    ##for beta0
+DFBETAS[abs(DFBETAS[,1])>2/sqrt(n),1]
+    ##for HR
+DFBETAS[abs(DFBETAS[,2])>2/sqrt(n),2]
+    ##for SO
+DFBETAS[abs(DFBETAS[,3])>2/sqrt(n),3]
+    ##for SV
+DFBETAS[abs(DFBETAS[,4])>2/sqrt(n),4]
+    ##for IPouts
+DFBETAS[abs(DFBETAS[,5])>2/sqrt(n),5]
+    ##for HRA
+DFBETAS[abs(DFBETAS[,6])>2/sqrt(n),6]
+    ##for BBA
+DFBETAS[abs(DFBETAS[,7])>2/sqrt(n),7]
+    ##for SOA
+DFBETAS[abs(DFBETAS[,8])>2/sqrt(n),8]
+    ##for FP
+DFBETAS[abs(DFBETAS[,9])>2/sqrt(n),9]
+    ##for OBP
+DFBETAS[abs(DFBETAS[,10])>2/sqrt(n),10]
+    ##for StealP
+DFBETAS[abs(DFBETAS[,11])>2/sqrt(n),11]
+```
+
+**Predictive Performance**:
+
+The model might be able to explain 84.41% of the variability in the new observations. The R-squared is 0.8499. Both values are fairly high and close to each other, so the model has good predictive ability.
+
+**Outlying Observations**:
+
+We identified no outlying observations using the Bonferroni procedure to review externally studentized residuals.
+
+**Influential Observations**:
+
+We identified no influential observations using Cook's distance; however, we identified 27 influential observations using DFFITS.
+
+```{r echo=FALSE}
+## SV
+result.y.SV<-lm(WinP ~ OBP + BBA + SOA + HRA + HR + FP + IPouts + SO + StealP, data=Data_Teamsln)
+result.SV<-lm(SV ~ OBP + BBA + SOA + HRA + HR + FP + IPouts + SO + StealP, data=Data_Teamsln)
+res.y.SV<-result.y.SV$residuals
+res.SV<-result.SV$residuals
+SV_df<-data.frame(res.y.SV, res.SV)
+
+    ##partial residual plot
+preg1<-ggplot(SV_df, aes(x=res.SV, y=res.y.SV))+
+  geom_point(color='#141E3C', size=0.3)+
+  geom_smooth(formula = y ~ x, method = "lm", col="#eb5f0c", se=FALSE)+
+  labs(title="SV")+
+  theme_linedraw()+
+  theme(axis.text.x=element_blank(), axis.text.y=element_blank(), axis.ticks.x=element_blank(),
+        axis.ticks.y=element_blank(), plot.title=element_text(size=9, face='bold', hjust=0.5),
+        axis.title.x=element_blank(), axis.title.y=element_blank())
+
+## OBP
+result.y.OBP<-lm(WinP ~ SV + BBA + SOA + HRA + HR + FP + IPouts + SO + StealP, data=Data_Teamsln)
+result.OBP<-lm(OBP ~ SV + BBA + SOA + HRA + HR + FP + IPouts + SO + StealP, data=Data_Teamsln)
+res.y.OBP<-result.y.OBP$residuals
+res.OBP<-result.OBP$residuals
+OBP_df<-data.frame(res.y.OBP, res.OBP)
+
+    ##partial residual plot
+preg2<-ggplot(OBP_df, aes(x=res.OBP, y=res.y.OBP))+
+  geom_point(color='#141E3C', size=0.3)+
+  geom_smooth(formula = y ~ x, method = "lm", col="#eb5f0c", se=FALSE)+
+  labs(title="OBP")+
+  theme_linedraw()+
+  theme(axis.text.x=element_blank(), axis.text.y=element_blank(), axis.ticks.x=element_blank(),
+        axis.ticks.y=element_blank(), plot.title=element_text(size=9, face='bold', hjust=0.5),
+        axis.title.x=element_blank(), axis.title.y=element_blank())
+
+## BBA
+result.y.BBA<-lm(WinP ~ SV + OBP + SOA + HRA + HR + FP + IPouts + SO + StealP, data=Data_Teamsln)
+result.BBA<-lm(BBA ~ SV + OBP + SOA + HRA + HR + FP + IPouts + SO + StealP, data=Data_Teamsln)
+res.y.BBA<-result.y.BBA$residuals
+res.BBA<-result.BBA$residuals
+BBA_df<-data.frame(res.y.BBA, res.BBA)
+
+    ##partial residual plot
+preg3<-ggplot(BBA_df, aes(x=res.BBA, y=res.y.BBA))+
+  geom_point(color='#141E3C', size=0.3)+
+  geom_smooth(formula = y ~ x, method = "lm", col="#eb5f0c", se=FALSE)+
+  labs(title="BBA")+
+  theme_linedraw()+
+  theme(axis.text.x=element_blank(), axis.text.y=element_blank(), axis.ticks.x=element_blank(),
+        axis.ticks.y=element_blank(), plot.title=element_text(size=9, face='bold', hjust=0.5),
+        axis.title.x=element_blank(), axis.title.y=element_blank())
+
+## SOA
+result.y.SOA<-lm(WinP ~ SV + OBP + BBA + HRA + HR + FP + IPouts + SO + StealP, data=Data_Teamsln)
+result.SOA<-lm(SOA ~ SV + OBP + BBA + HRA + HR + FP + IPouts + SO + StealP, data=Data_Teamsln)
+res.y.SOA<-result.y.SOA$residuals
+res.SOA<-result.SOA$residuals
+SOA_df<-data.frame(res.y.SOA, res.SOA)
+
+    ##partial residual plot
+preg4<-ggplot(SOA_df, aes(x=res.SOA, y=res.y.SOA))+
+  geom_point(color='#141E3C', size=0.3)+
+  geom_smooth(formula = y ~ x, method = "lm", col="#eb5f0c", se=FALSE)+
+  labs(title="SOA")+
+  theme_linedraw()+
+  theme(axis.text.x=element_blank(), axis.text.y=element_blank(), axis.ticks.x=element_blank(),
+        axis.ticks.y=element_blank(), plot.title=element_text(size=9, face='bold', hjust=0.5),
+        axis.title.x=element_blank(), axis.title.y=element_blank())
+
+## HRA
+result.y.HRA<-lm(WinP ~ SV + OBP + BBA + SOA + HR + FP + IPouts + SO + StealP, data=Data_Teamsln)
+result.HRA<-lm(HRA ~ SV + OBP + BBA + SOA + HR + FP + IPouts + SO + StealP, data=Data_Teamsln)
+res.y.HRA<-result.y.HRA$residuals
+res.HRA<-result.HRA$residuals
+HRA_df<-data.frame(res.y.HRA, res.HRA)
+
+    ##partial residual plot
+preg5<-ggplot(HRA_df, aes(x=res.HRA, y=res.y.HRA))+
+  geom_point(color='#141E3C', size=0.3)+
+  geom_smooth(formula = y ~ x, method = "lm", col="#eb5f0c", se=FALSE)+
+  labs(title="HRA")+
+  theme_linedraw()+
+  theme(axis.text.x=element_blank(), axis.text.y=element_blank(), axis.ticks.x=element_blank(),
+        axis.ticks.y=element_blank(), plot.title=element_text(size=9, face='bold', hjust=0.5),
+        axis.title.x=element_blank(), axis.title.y=element_blank())
+
+## HR
+result.y.HR<-lm(WinP ~ SV + OBP + BBA + SOA + HRA + FP + IPouts + SO + StealP, data=Data_Teamsln)
+result.HR<-lm(HR ~ SV + OBP + BBA + SOA + HRA + FP + IPouts + SO + StealP, data=Data_Teamsln)
+res.y.HR<-result.y.HR$residuals
+res.HR<-result.HR$residuals
+HR_df<-data.frame(res.y.HR, res.HR)
+
+    ##partial residual plot
+preg6<-ggplot(HR_df, aes(x=res.HR, y=res.y.HR))+
+  geom_point(color='#141E3C', size=0.3)+
+  geom_smooth(formula = y ~ x, method = "lm", col="#eb5f0c", se=FALSE)+
+  labs(title="HR")+
+  theme_linedraw()+
+  theme(axis.text.x=element_blank(), axis.text.y=element_blank(), axis.ticks.x=element_blank(),
+        axis.ticks.y=element_blank(), plot.title=element_text(size=9, face='bold', hjust=0.5),
+        axis.title.x=element_blank(), axis.title.y=element_blank())
+
+## FP
+result.y.FP<-lm(WinP ~ SV + OBP + BBA + SOA + HRA + HR + IPouts + SO + StealP, data=Data_Teamsln)
+result.FP<-lm(FP ~ SV + OBP + BBA + SOA + HRA + HR + IPouts + SO + StealP, data=Data_Teamsln)
+res.y.FP<-result.y.FP$residuals
+res.FP<-result.FP$residuals
+FP_df<-data.frame(res.y.FP, res.FP)
+
+    ##partial residual plot
+preg7<-ggplot(FP_df, aes(x=res.FP, y=res.y.FP))+
+  geom_point(color='#141E3C', size=0.3)+
+  geom_smooth(formula = y ~ x, method = "lm", col="#eb5f0c", se=FALSE)+
+  labs(title="FP")+
+  theme_linedraw()+
+  theme(axis.text.x=element_blank(), axis.text.y=element_blank(), axis.ticks.x=element_blank(),
+        axis.ticks.y=element_blank(), plot.title=element_text(size=9, face='bold', hjust=0.5),
+        axis.title.x=element_blank(), axis.title.y=element_blank())
+
+## IPouts
+result.y.IPouts<-lm(WinP ~ SV + OBP + BBA + SOA + HRA + HR + FP + SO + StealP, data=Data_Teamsln)
+result.IPouts<-lm(IPouts ~ SV + OBP + BBA + SOA + HRA + HR + FP + SO + StealP, data=Data_Teamsln)
+res.y.IPouts<-result.y.IPouts$residuals
+res.IPouts<-result.IPouts$residuals
+IPouts_df<-data.frame(res.y.IPouts, res.IPouts)
+
+    ##partial residual plot
+preg8<-ggplot(IPouts_df, aes(x=res.IPouts, y=res.y.IPouts))+
+  geom_point(color='#141E3C', size=0.3)+
+  geom_smooth(formula = y ~ x, method = "lm", col="#eb5f0c", se=FALSE)+
+  labs(title="IPouts")+
+  theme_linedraw()+
+  theme(axis.text.x=element_blank(), axis.text.y=element_blank(), axis.ticks.x=element_blank(),
+        axis.ticks.y=element_blank(), plot.title=element_text(size=9, face='bold', hjust=0.5),
+        axis.title.x=element_blank(), axis.title.y=element_blank())
+
+## SO
+result.y.SO<-lm(WinP ~ SV + OBP + BBA + SOA + HRA + HR + FP + IPouts + StealP, data=Data_Teamsln)
+result.SO<-lm(SO ~ SV + OBP + BBA + SOA + HRA + HR + FP + IPouts + StealP, data=Data_Teamsln)
+res.y.SO<-result.y.SO$residuals
+res.SO<-result.SO$residuals
+SO_df<-data.frame(res.y.SO, res.SO)
+
+    ##partial residual plot
+preg9<-ggplot(SO_df, aes(x=res.SO, y=res.y.SO))+
+  geom_point(color='#141E3C', size=0.3)+
+  geom_smooth(formula = y ~ x, method = "lm", col="#eb5f0c", se=FALSE)+
+  labs(title="SO")+
+  theme_linedraw()+
+  theme(axis.text.x=element_blank(), axis.text.y=element_blank(), axis.ticks.x=element_blank(),
+        axis.ticks.y=element_blank(), plot.title=element_text(size=9, face='bold', hjust=0.5),
+        axis.title.x=element_blank(), axis.title.y=element_blank())
+
+## StealP
+result.y.StealP<-lm(WinP ~ SV + OBP + BBA + SOA + HRA + HR + FP + IPouts + SO, data=Data_Teamsln)
+result.StealP<-lm(StealP ~ SV + OBP + BBA + SOA + HRA + HR + FP + IPouts + SO, data=Data_Teamsln)
+res.y.StealP<-result.y.StealP$residuals
+res.StealP<-result.StealP$residuals
+StealP_df<-data.frame(res.y.StealP, res.StealP)
+
+    ##partial residual plot
+preg10<-ggplot(StealP_df, aes(x=res.StealP, y=res.y.StealP))+
+  geom_point(color='#141E3C', size=0.3)+
+  geom_smooth(formula = y ~ x, method = "lm", col="#eb5f0c", se=FALSE)+
+  labs(title="StealP")+
+  theme_linedraw()+
+  theme(axis.text.x=element_blank(), axis.text.y=element_blank(), axis.ticks.x=element_blank(),
+        axis.ticks.y=element_blank(), plot.title=element_text(size=9, face='bold', hjust=0.5),
+        axis.title.x=element_blank(), axis.title.y=element_blank())
+
+#Plot all the partial residual plots together
+grid.arrange(preg1, preg2, preg3, preg4, preg5, preg6, preg7, preg8, preg9, preg10, ncol=5, nrow=2,
+             top=textGrob("Figure 1.e: Partial Regression Plots for all Predictors",gp=gpar(fontsize=13,font=2)))
+```
+
+Per Figure 1.e., the partial regression plots for each predictor, we see that a linear term for each predictor is appropriate based on the patterns of each scatterplot. In particular, **`SV`**, **`OBP`**, and **`HR`** have strong positive linear patterns, and **`BBA`** and **`HRA`** show strong negative linear patterns.
+
+### d. Conclusions:
+
+#### i. Discuss how our model(s) answers our question of interest
+
+Based on a review of available predictor variables, which included analyzing correlation, potential interaction terms, partial F-tests, and various automated search procedures, we developed a statistically significant model for predicting baseball win percentage that identified **`HR`** (Homeruns by batters), **`SO`** (Strikeouts by batters), **`SV`** (Saves), **`IPouts`** (Outs Pitched), **`HRA`**  (Homeruns allowed), **`BBA`** (Walks allowed), **`SOA`** (Strikeouts by pitchers), **`FP`** (Fielding percentage), **`OBP`** (On-base percentage), and **`StealP`** (Stolen Base success rate) as significant predictors. This means that these baseball statistics together create a useful model for predicting win percentages, which implies that owners and managers alike can focus on improving these team statistics together to best improve their win percentages.
+
+#### ii. Provide interesting insights gained about the data
+
+Interestingly, double plays appeared to have a slight negative correlation with wins for all divisions in the MLB based on our initial scatterplot visualizations. We initially believed double plays would be an important predictor for win percentage, but looking deeper, it could be the case that teams with high double plays in a season may indicate poor pitching and/or fielding performance because a team wouldn't even have the opportunity to make a double play if they were consistently striking out batters, denying hits, and making less fielding errors. During the model-building process, we eventually dropped **`DP`** because this predictor was not statistically significant in our model. 
+
+Likewise, we dropped **`Spend`** (team spend in a season) from our regression model. **`Spend`** appears to be positively correlated with win percentage based on initial visualizations. **`Spend`** is a very controversial statistic in baseball news, as there can be a large difference across the MLB in team payroll for a given season. During the 1997 - 2016 period (as well as currently in 2023), the MLB has no salary cap or salary floor. Some teams spend very little, whether because of the owner's decisions, the general manager's strategic decisions, finance issues, lack of income from a strong fanbase, or other reasons. However, teams with high payrolls can afford higher-valued players, so they are expected to consistently outperform teams with low payrolls. However, we see that the correlation between **`Spend`** and **`WinP`** is not as strong as other predictors in our analysis and is eventually deemed statistically insignificant in the presence of the other predictors. In context, some reasoning for this may be that the MLB overvalues "good" players who may be paid more than they are worth in terms of contributing to the team's winning percentage. Also, the influence of young, cheap talent from the draft might weaken the impact of **`Spend`** on **`WinP`**. Teams with low payrolls and strong, cheap draft picks may be able to win more than teams with highly compensated star players. 
+
+We also dropped **`lgIdDivID`** (identifier for league + division). The American League East (AL_E) is consistently the strongest MLB division; some data support this based on the trend lines in our initial scatterplots for each predictor. There also seems to be some variation across all divisions in **`WinP`**  across our predictors based on the trend lines in these scatterplots. However, **`lgIdDivID`** is eventually dropped from the model and does not appear to be a significant predictor of wins.
+
+#### iii. Challenges we faced
+
+The Lahman MLB database contains 32 tables with dozens of categorical and quantitative variables. We spent significant time researching these variables to understand their context in the game of baseball holistically and their context in potentially being used as predictors for win percentage. We eventually developed a simple yet useful model for predicting win percentage using 10 quantitative predictors based on our understanding of these predictors and our use of various statistical methods. We also were wary of overfitting the model given all the many (often related) predictors at our disposal from the main tables we used from the database.
+
+---
+
+## 4.
+
+### a. Introduction:
+
+```{r include=FALSE}
+#Import the SeriesPost table from the Lahman Baseball package
+Data_playoffs<-(SeriesPost)
+
+    #Filter to 1997 - 2016
+Data_playoffs<-Data_playoffs %>% 
+  filter(yearID %in% (1997:2016))
+
+    #Create teamdID+yearID (winner)
+Data_playoffs$team_yr_ID_w<-paste(Data_playoffs$teamIDwinner,Data_playoffs$yearID)
+
+    #Create teamdID+yearID (loser)
+Data_playoffs$team_yr_ID_l<-paste(Data_playoffs$teamIDloser,Data_playoffs$yearID)
+
+    #Create factor for playoffs in teams df
+Data_Teams<-Data_Teams %>% 
+  mutate(playoffs_win = Data_Teams$team_yr_ID %in% Data_playoffs$team_yr_ID_w)
+
+Data_Teams<-Data_Teams %>% 
+  mutate(playoffs_lose = Data_Teams$team_yr_ID %in% Data_playoffs$team_yr_ID_l)
+
+Data_Teams$Playoffs<-paste(Data_Teams$playoffs_win, Data_Teams$playoffs_lose)
+
+Data_Teams$Playoffs[Data_Teams$Playoffs == 'TRUE TRUE'] <- 1
+Data_Teams$Playoffs[Data_Teams$Playoffs == 'FALSE FALSE'] <- 0
+Data_Teams$Playoffs[Data_Teams$Playoffs == 'FALSE TRUE'] <- 1
+Data_Teams$Playoffs[Data_Teams$Playoffs == 'TRUE FALSE'] <- 1
+
+    #Remove the unecessary variables that we used to create playoffs variable
+Data_Teams<-subset(Data_Teams, select = -c(playoffs_lose, playoffs_win))
+
+    #Change playoffs to factor
+Data_Teams$Playoffs<-as.factor(Data_Teams$Playoffs)
+
+    #Create separate dfs for train and test
+Data_Teams2<-Data_Teams %>% 
+  filter(yearID == 2016)
+
+Data_Teams1<-Data_Teams %>%
+  filter(yearID %in% (1997:2015))
+
+    #Remove lgID, divID, teamID, WinP from the train and test data
+Data_Teams2<-subset(Data_Teams2, select = -c(yearID, team_yr_ID, lgID, divID, teamID, WinP))
+Data_Teams1<-subset(Data_Teams1, select = -c(yearID, team_yr_ID, lgID, divID, teamID, WinP))
+
+#Split Data_Teams into test and train
+set.seed(111)
+
+train<-Data_Teams1 ##training data
+test<-Data_Teams2 ##test data
+
+#Create variable to categorizes observations by mean values for each predictor variable
+trainviz<-train %>%
+  mutate(HR_Category = ifelse(HR >= mean(HR), "High", "Low")) %>% 
+  mutate(IPouts_Category = ifelse(IPouts >= mean(IPouts), "High", "Low")) %>% 
+  mutate(SOA_Category = ifelse(SOA >= mean(SOA), "High", "Low")) %>% 
+  mutate(Spend_Category = ifelse(Spend >= mean(Spend), "High", "Low")) %>% 
+  mutate(HRA_Category = ifelse(HRA >= mean(HRA), "High", "Low ")) %>% 
+  mutate(BBA_Category = ifelse(BBA >= mean(BBA), "High", "Low")) %>% 
+  mutate(OBP_Category = ifelse(OBP >= mean(OBP), "High", "Low")) %>% 
+  mutate(StealP_Category = ifelse(StealP >=mean(StealP), "High", "Low")) %>%
+  mutate(SO_Category = ifelse(SO >= mean(SO), "High", "Low")) %>% 
+  mutate(DP_Category = ifelse(DP >= mean(DP), "High", "Low")) %>%
+  mutate(FP_Category = ifelse(FP >= mean(FP), "High", "Low")) %>% 
+  mutate(SV_Category = ifelse(SV >= mean(SV), "High", "Low"))
+
+#Create a new variable that groups teams into playoff and non-playoff categories
+trainviz<-trainviz %>%
+  mutate(Playoffs = ifelse(Playoffs == 1, "Yes", "No"))
+
+#Create vector for Spend for use in later chart
+Spend_vec<-trainviz
+Spend_vec<-subset(Spend_vec, select = -c(HR, SO, IPouts, HRA, SV, BBA, OBP, SOA, DP, FP, 
+                                         StealP, HRA_Category, BBA_Category, OBP_Category, SV_Category))
+```
+
+#### i. Second question of interest
+
+Using the 19 seasons spanning 1997-2015, can we develop an accurate model to predict a team making the 2016 playoffs?
+
+#### ii. Why this question is worth exploring
+
+Making it to the playoffs, or advancing to the postseason, is one of many measures of an MLB team's success and competitiveness. Knowing which predictors best influence a team's odds of advancing to the postseason is useful for owners, players, and fans alike in understanding how to best allocate resources and strategize to gain the best odds of advancing.
+
+### b. Data Visualizations:
+
+#### i. Data-wrangling
+
+Several data-wrangling processes were necessary to produce visualizations for this section. We completed much of the data-wrangling in the linear regression section, but a few extra steps were necessary to add our response variable, **`playoffs`**, for the logistic section.
+
+We imported the *SeriesPost* table to get the data necessary to identify whether each observation made it to the playoffs. We filtered the dataframe, *Data_playoffs*, to seasons between 1997 and 2016. We used this dataframe to create our response variable, **`playoffs`**. To do so, we created two new columns in the *Data_playoffs* dataframe to store the unique identifiers of team-year combinations that made it to the playoffs called **`team_yr_ID_w`** and **`team_yr_ID_l`**; we created these two separate columns in the dataframe because our question of interest is about making it to the playoffs generally, not whether an observation (team-year combination) won or lost a given round. Next, we used the `mutate` function to create two variables in the *Data_Teams* dataframe called **`playoffs_win`** and **`playoffs_lose`**, and matched **`team_yr_ID_w`** from the *Data_playoffs* dataframe with **`playoffs_win`** in the *Data_Teams* dataframe, and did the same for **`team_yr_ID_l`** and **`playoffs_lose`**. The next step was to create the actual response variable, **`playoffs`**, using the `paste` function to combine the **`playoffs_win`** column with the **`playoffs_lose`** column in the *Data_Teams* dataframe. At this point, the **`playoffs`** column in the *Data_Teams* dataframe contains "TRUE TRUE," "FALSE TRUE," or "TRUE FALSE" if the observation made it to the playoffs, and "FALSE FALSE" if the observation did not make it to the playoffs. The final step to create our predictor variable, **`playoffs`**, was to use Boolean indexing to change instances of "TRUE TRUE," "FALSE TRUE," and "TRUE FALSE" to 1 and instances of "FALSE FALSE" to 0. We removed **`playoffs_lose`** and **`playoffs_win`** from the *Data_Teams* dataframe and changed **`playoffs`** to a factor.
+
+In addition, to help us visualize the data, we added categorical variables that bin teams into "High" and "Low" categories for each numeric predictor based on whether the observation was above or below the sample mean. For example, the **`OBP_category`** column has categories for "High OBP" and "Low OBP" based on whether the team's **`OBP`** is higher or lower than the sample mean **`OBP`**.
+
+The next step was to separate the *Data_Teams* dataframe into two parts; one dataframe for team-year combinations between 1997 and 2015, which we use as training data, and the second dataframe for team-year combinations for 2016, which we use as the test data. We set the test and train data in this way due to the context of our question of interest; we want to predict teams that make it to the playoffs in 2016 using data from 1997-2015.
+
+#### ii. Data visualizations
+
+First, we examine the percentage of teams that make it to the Playoffs while grouping them into higher-than-average and lower-than-average for each predictor.
+
+```{r echo=FALSE}
+den1<-ggdensity(trainviz, x = "HRA", add = "mean", rug = TRUE, color = "Playoffs", fill = "Playoffs", 
+                alpha=0.3, palette = c("#141E3C", "#eb5f0c"), title = "HRA", ggtheme = theme_linedraw())
+
+den2<-ggdensity(trainviz, x = "SV", add = "mean", rug = TRUE, color = "Playoffs", fill = "Playoffs", 
+                alpha=0.3, palette = c("#141E3C", "#eb5f0c"), title = "SV", ylab = F, ggtheme = theme_linedraw())
+
+den3<-ggdensity(trainviz, x = "BBA", add = "mean", rug = TRUE, color = "Playoffs", fill = "Playoffs", 
+                alpha=0.3, palette = c("#141E3C", "#eb5f0c"), title = "BBA", ylab = F, ggtheme = theme_linedraw())
+
+den4<-ggdensity(trainviz, x = "OBP", add = "mean", rug = TRUE, color = "Playoffs", fill = "Playoffs", 
+                alpha=0.3, palette = c("#141E3C", "#eb5f0c"), title = "OBP", ggtheme = theme_linedraw())
+
+den5<-ggdensity(trainviz, x = "HR", add = "mean", rug = TRUE, color = "Playoffs", fill = "Playoffs", 
+                alpha=0.3, palette = c("#141E3C", "#eb5f0c"), title = "HR", ylab = F, ggtheme = theme_linedraw())
+
+den6<-ggdensity(trainviz, x = "IPouts", add = "mean", rug = TRUE, color = "Playoffs", fill = "Playoffs", 
+                alpha=0.3, palette = c("#141E3C", "#eb5f0c"), title = "IPouts", ylab = F, ggtheme = theme_linedraw())
+
+den7<-ggdensity(Spend_vec, x = "Spend", add = "mean", rug = TRUE, color = "Playoffs", fill = "Playoffs", 
+                alpha=0.3, palette = c("#141E3C", "#eb5f0c"), title = "Spend ($M)", ggtheme = theme_linedraw())
+
+den8<-ggdensity(trainviz, x = "SOA", add = "mean", rug = TRUE, color = "Playoffs", fill = "Playoffs", 
+                alpha=0.3, palette = c("#141E3C", "#eb5f0c"), title = "SOA", ylab = F, ggtheme = theme_linedraw())
+
+den9<-ggdensity(trainviz, x = "StealP", add = "mean", rug = TRUE, color = "Playoffs", fill = "Playoffs", 
+                alpha=0.3, palette = c("#141E3C", "#eb5f0c"), title = "StealP", ylab = F, ggtheme = theme_linedraw())
+
+den10<-ggdensity(trainviz, x = "SO", add = "mean", rug = TRUE, color = "Playoffs", fill = "Playoffs", 
+                 alpha=0.3, palette = c("#141E3C", "#eb5f0c"), title = "SO", ggtheme = theme_linedraw())
+
+den11<-ggdensity(trainviz, x = "FP", add = "mean", rug = TRUE, color = "Playoffs", fill = "Playoffs", 
+                 alpha=0.3, palette = c("#141E3C", "#eb5f0c"), title = "FP", ylab = F, ggtheme = theme_linedraw())
+
+den12<-ggdensity(trainviz, x = "DP", add = "mean", rug = TRUE, color = "Playoffs", fill = "Playoffs", 
+                 alpha=0.3, palette = c("#141E3C", "#eb5f0c"), title = "DP", ylab = F, ggtheme = theme_linedraw())
+
+#Combine density plots 1-6
+combined7<-den1 + den2 + den3 + den4 + den5 + den6
+#Plot density plots 1-6
+combined7 + plot_layout(guides="collect") + 
+  plot_annotation(title = 'Figure 2.a: Predictors by Playoff Status') & 
+  theme(plot.title=element_text(face='bold', size=12, hjust=0.5), 
+        axis.text.y=element_blank(), axis.ticks=element_blank(), 
+        axis.title=element_text(size=9, face='bold'))
+```
+
+```{r echo=FALSE}
+#Combine density plots 7-12
+combined12 <- den7 + den8 + den9 + den10 + den11 + den12
+#Plot density plots 7-12
+combined12 + plot_layout(guides="collect") &  plot_annotation() & 
+theme(plot.title=element_text(face ='bold', hjust=0.5), axis.text.y=element_blank(), 
+      axis.ticks=element_blank(), axis.title=element_text(size=9, face='bold'))
+```
+
+Next, we use the categorical variables to better visualize the difference in the percentage of teams making the playoffs by comparing teams with higher-than-average and lower-than-average values per variable.
+
+```{r echo=FALSE}
+bar1<-ggplot(trainviz, aes(x = HRA_Category, fill = Playoffs)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values=c('#141E3C', '#eb5f0c')) +
+  labs(title = "HRA", x = "HRA Category", y = "Percent of Teams") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_linedraw() +
+  theme(axis.ticks.x=element_blank(),axis.ticks.y=element_blank(),
+        plot.title=element_text(size=11, face='bold', hjust=0.5), legend.position="none", 
+        axis.text.x=element_text(size=8, face='bold'), axis.text.y=element_text(size=8, face='bold'),
+        axis.title.y=element_text(size=9, face='bold'), axis.title.x=element_text(size=9, face='bold'))
+
+bar2<-ggplot(trainviz, aes(x = BBA_Category, fill = Playoffs)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values=c('#141E3C', '#eb5f0c')) +
+  labs(title = "BBA", x = "BBA Category", y = "Percent of Teams") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_linedraw() +
+  theme(axis.ticks.x=element_blank(), axis.ticks.y=element_blank(),
+        plot.title=element_text(size=11, face='bold', hjust=0.5), legend.position="none",
+        axis.text.x=element_text(size=8, face='bold'), axis.text.y=element_blank(),
+        axis.title.y=element_blank(), axis.title.x=element_text(size=9, face='bold'))
+
+bar3<-ggplot(trainviz, aes(x = OBP_Category, fill = Playoffs)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values=c('#141E3C', '#eb5f0c')) +
+  labs(title = "OBP", x = "OBP Category", y = "Percent of Teams") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_linedraw() +
+  theme(axis.ticks.x=element_blank(), axis.ticks.y=element_blank(),
+        plot.title=element_text(size=11, face='bold', hjust=0.5), legend.position="none",
+        axis.text.x=element_text(size=8, face='bold'), axis.text.y=element_blank(),
+        axis.title.y=element_blank(), axis.title.x=element_text(size=9, face='bold'))
+
+bar4<-ggplot(trainviz, aes(x = SV_Category, fill = Playoffs)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values=c('#141E3C', '#eb5f0c')) +
+  labs(title = "SV", x = "SV Category", y = "Percent of Teams") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_linedraw() +
+  theme(axis.ticks.x=element_blank(), axis.ticks.y=element_blank(),
+        plot.title=element_text(size=11, face ='bold', hjust=0.5), legend.position="none", 
+        axis.text.x=element_text(size=8, face='bold'), axis.text.y=element_text(size=8, face='bold'),
+        axis.title.y=element_text(size=9, face='bold'), axis.title.x=element_text(size=9, face='bold'))
+
+bar5<-ggplot(trainviz, aes(x = HR_Category, fill = Playoffs)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values=c('#141E3C', '#eb5f0c')) +
+  labs(title = "HR", x = "HR Category", y = "Percent of Teams") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_linedraw() +
+  theme(axis.ticks.x=element_blank(),axis.ticks.y=element_blank(),
+        plot.title=element_text(size=11, face='bold', hjust = 0.5), legend.position="none",
+        axis.text.x=element_text(size=8, face='bold'), axis.text.y=element_blank(),
+        axis.title.y=element_blank(), axis.title.x=element_text(size=9, face='bold'))
+
+bar6<-ggplot(trainviz, aes(x = IPouts_Category, fill = Playoffs)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values=c('#141E3C', '#eb5f0c')) +
+  labs(title = "IPouts", x = "IPouts Category", y = "Percent of Teams") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_linedraw() +
+  theme(axis.ticks.x=element_blank(),axis.ticks.y=element_blank(),
+        plot.title=element_text(size=11, face='bold', hjust = 0.5), legend.position="none",
+        axis.text.x=element_text(size=8, face='bold'), axis.text.y=element_blank(),
+        axis.title.y=element_blank(), axis.title.x=element_text(size=9, face='bold'))
+
+bar7<-ggplot(trainviz, aes(x = SOA_Category, fill = Playoffs)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values=c('#141E3C', '#eb5f0c')) +
+  labs(title = "SOA", x = "SOA Category", y = "Percent of Teams") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_linedraw() +
+  theme(axis.ticks.x=element_blank(),axis.ticks.y=element_blank(),
+        plot.title=element_text(size=11, face='bold', hjust = 0.5), legend.position="none",
+        axis.text.x=element_text(size=8, face='bold'), axis.text.y=element_text(size=8, face='bold'),
+        axis.title.y=element_text(size=9, face='bold'), axis.title.x=element_text(size=9, face='bold'))
+
+bar8<-ggplot(trainviz, aes(x = Spend_Category, fill = Playoffs)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values=c('#141E3C', '#eb5f0c')) +
+  labs(title = "Spend", x = "Spend Category", y = "Percent of Teams") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_linedraw() +
+  theme(axis.ticks.x=element_blank(),axis.ticks.y=element_blank(),
+        plot.title = element_text(size=11, face='bold', hjust = 0.5), legend.position="none",
+        axis.text.x=element_text(size=8, face='bold'), axis.text.y=element_blank(),
+        axis.title.y=element_blank(), axis.title.x=element_text(size=9, face='bold'))
+
+bar9<-ggplot(trainviz, aes(x = StealP_Category, fill = Playoffs)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values=c('#141E3C', '#eb5f0c')) +
+  labs(title = "StealP", x = "StealP Category", y = "Percent of Teams") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_linedraw() +
+  theme(axis.ticks.x=element_blank(),axis.ticks.y=element_blank(),
+        plot.title=element_text(size=11, face='bold', hjust = 0.5), legend.position="none",
+        axis.text.x=element_text(size=8, face='bold'), axis.text.y=element_blank(),
+        axis.title.y=element_blank(), axis.title.x=element_text(size=9, face='bold'))
+
+bar10<-ggplot(trainviz, aes(x = SO_Category, fill = Playoffs)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values=c('#141E3C', '#eb5f0c')) +
+  labs(title = "SO", x = "SO Category", y = "Percent of Teams") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_linedraw() +
+  theme(axis.ticks.x=element_blank(),axis.ticks.y=element_blank(),
+        plot.title=element_text(size=11, face='bold', hjust=0.5), legend.position="none",
+        axis.text.x=element_text(size=8, face='bold'), axis.text.y=element_text(size=8, face='bold'),
+        axis.title.y=element_text(size=9, face='bold'), axis.title.x=element_text(size=9, face='bold'))
+
+bar11<-ggplot(trainviz, aes(x = DP_Category, fill = Playoffs)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values=c('#141E3C', '#eb5f0c')) +
+  labs(title = "DP", x = "DP Category", y = "Percent of Teams") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_linedraw() +
+  theme(axis.ticks.x=element_blank(), axis.ticks.y=element_blank(),
+        plot.title=element_text(size=11, face='bold', hjust=0.5), legend.position="none",
+        axis.text.x=element_text(size=8, face='bold'), axis.text.y=element_blank(),
+        axis.title.y=element_blank(), axis.title.x=element_text(size=9, face='bold'))
+
+bar12<-ggplot(trainviz, aes(x = FP_Category, fill = Playoffs)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values=c('#141E3C', '#eb5f0c')) +
+  labs(title = "FP", x = "FP Category", y = "Percent of Teams") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_linedraw() +
+  theme(axis.ticks.x=element_blank(), axis.ticks.y=element_blank(),
+        plot.title=element_text(size=11, face='bold', hjust=0.5), legend.position="none",
+        axis.text.x=element_text(size=8, face='bold'), axis.text.y=element_blank(),
+        axis.title.y=element_blank(), axis.title.x=element_text(size=9, face='bold'))
+
+#Combine bar charts 1-6
+combined1 <- bar1 + bar2 + bar3 + bar4 + bar5 + bar6
+#Plot bar charts 1-6
+combined1 + plot_layout(guides="collect") + 
+  plot_annotation(title = 'Figure 2.b: Predictors by Category and Playoff Status') & 
+  theme(legend.position = "right", plot.title = element_text(face='bold', hjust=0.5))
+```
+
+```{r echo=FALSE}
+#Combine bar charts 7-12
+combined11 <- bar7 + bar8 + bar9 + bar10 + bar11 + bar12
+#Plot bar charts 1-6
+combined11 + plot_layout(guides="collect") + 
+  theme(legend.position = "right", plot.title = element_text(face='bold', hjust=0.5))
+```
+
+The bar charts in Figure 2.c show higher shares of teams that make it to the playoffs have lower-than-average **`HRA`** and **`BBA`** but higher-than-average **`OBP`** and **`SV`**.
+
+Again, while not as prominent, we see that higher shares of teams that make it to the playoffs have higher-than-average **`HR`**, **`IPouts`**, **`SOA`**, and **`Spend`**.
+
+```{r echo=FALSE}
+bp1<-ggplot(trainviz, aes(x=Playoffs, y=HRA))+
+  geom_point(shape=16, size=1.1, color="#eb5f0c", fill="#eb5f0c", alpha=0.6)+
+  geom_boxplot(width=0.4, color="#141E3C", fill="#141E3C", alpha=0.1)+
+  theme_linedraw()+
+  theme(axis.title.x=element_text(size=8, face='bold'), 
+        axis.title.y=element_text(size=8, face='bold')) +
+  labs(title='HRA', y="HRA")
+
+bp2<-ggplot(trainviz, aes(x=Playoffs, y=OBP))+
+  geom_point(shape=16, size=1.1, color="#eb5f0c", fill="#eb5f0c", alpha=0.6)+
+  geom_boxplot(width=0.4, color="#141E3C", fill="#141E3C", alpha=0.1)+
+  theme_linedraw()+
+  theme(axis.title.x=element_text(size=8, face='bold'), 
+        axis.title.y=element_text(size=8, face='bold')) +
+  labs(title='OBP', y="OBP")
+
+bp3<-ggplot(trainviz, aes(x=Playoffs, y=BBA))+
+  geom_point(shape=16, size=1.1, color="#eb5f0c", fill="#eb5f0c", alpha=0.6)+
+  geom_boxplot(width=0.4, color="#141E3C", fill="#141E3C", alpha=0.1)+
+  theme_linedraw()+
+  theme(axis.title.x=element_text(size=8, face='bold'), 
+        axis.title.y=element_text(size=8, face='bold')) +
+  labs(title='BBA', y="BBA")
+
+bp4<-ggplot(trainviz, aes(x=Playoffs, y=IPouts))+
+  geom_point(shape=16, size=1.1, color="#eb5f0c", fill="#eb5f0c", alpha=0.6)+
+  geom_boxplot(width=0.4, color="#141E3C", fill="#141E3C", alpha=0.1)+
+  theme_linedraw()+
+  theme(axis.title.x=element_text(size=8, face='bold'), 
+        axis.title.y=element_text(size=8, face='bold')) +
+  labs(title='IPouts', y="IPouts")
+
+bp5<-ggplot(trainviz, aes(x=Playoffs, y=SV))+
+  geom_point(shape=16, size=1.1, color="#eb5f0c", fill="#eb5f0c", alpha=0.6)+
+  geom_boxplot(width=0.4, color="#141E3C", fill="#141E3C", alpha=0.1)+
+  theme_linedraw()+
+  theme(axis.title.x=element_text(size=8, face='bold'), 
+        axis.title.y=element_text(size=8, face='bold')) +
+  labs(title='SV', y="SV")
+
+bp6<-ggplot(trainviz, aes(x=Playoffs, y=HR))+
+  geom_point(shape=16, size=1.1, color="#eb5f0c", fill="#eb5f0c", alpha=0.6)+
+  geom_boxplot(width=0.4, color="#141E3C", fill="#141E3C", alpha=0.1)+
+  theme_linedraw()+
+  theme(axis.title.x=element_text(size=8, face='bold'), 
+        axis.title.y=element_text(size=8, face='bold')) +
+  labs(title='HR', y="HR")
+
+bp7<-ggplot(trainviz, aes(x=Playoffs, y=StealP))+
+  geom_point(shape=16, size=1.1, color="#eb5f0c", fill="#eb5f0c", alpha=0.6)+
+  geom_boxplot(width=0.4, color="#141E3C", fill="#141E3C", alpha=0.1)+
+  theme_linedraw()+
+  theme(axis.title.x=element_text(size=8, face='bold'), 
+        axis.title.y=element_text(size=8, face='bold')) +
+  labs(title='StealP', y="StealP")
+
+bp8<-ggplot(trainviz, aes(x=Playoffs, y=SOA))+
+  geom_point(shape=16, size=1.1, color="#eb5f0c", fill="#eb5f0c", alpha=0.6)+
+  geom_boxplot(width=0.4, color="#141E3C", fill="#141E3C", alpha=0.1)+
+  theme_linedraw()+
+  theme(axis.title.x=element_text(size=8, face='bold'), 
+        axis.title.y=element_text(size=8, face='bold')) +
+  labs(title='SOA', y="SOA")
+
+bp9<-ggplot(Spend_vec, aes(x=Playoffs, y=Spend))+
+  geom_point(shape=16, size=1.1, color="#eb5f0c", fill="#eb5f0c", alpha=0.6)+
+  geom_boxplot(width=0.4, color="#141E3C", fill="#141E3C", alpha=0.1)+
+  theme_linedraw()+
+  theme(axis.title.x=element_text(size=8, face='bold'), 
+        axis.title.y=element_text(size=8, face='bold')) +
+  labs(title='Spend ($M)')
+
+bp10<-ggplot(trainviz, aes(x=Playoffs, y=SO))+
+  geom_point(shape=16, size=1.1, color="#eb5f0c", fill="#eb5f0c", alpha=0.6)+
+  geom_boxplot(width=0.4, color="#141E3C", fill="#141E3C", alpha=0.1)+
+  theme_linedraw()+
+  theme(axis.title.x=element_text(size=8, face='bold'), 
+        axis.title.y=element_text(size=8, face='bold')) +
+  labs(title='SO', y="SO")
+
+bp11<-ggplot(trainviz, aes(x=Playoffs, y=FP))+
+  geom_point(shape=16, size=1.1, color="#eb5f0c", fill="#eb5f0c", alpha=0.6)+
+  geom_boxplot(width=0.4, color="#141E3C", fill="#141E3C", alpha=0.1)+
+  theme_linedraw()+
+  theme(axis.title.x=element_text(size=8, face='bold'), 
+        axis.title.y=element_text(size=8, face='bold')) +
+  labs(title='FP', y="FP")
+
+bp12<-ggplot(trainviz, aes(x=Playoffs, y=DP))+
+  geom_point(shape=16, size=1.1, color="#eb5f0c", fill="#eb5f0c", alpha=0.6)+
+  geom_boxplot(width=0.4, color="#141E3C", fill="#141E3C", alpha=0.1)+
+  theme_linedraw()+
+  theme(axis.title.x=element_text(size=8, face='bold'), 
+        axis.title.y=element_text(size=8, face='bold')) +
+  labs(title='DP', y="DP")
+
+#Combine boxplots 1-6
+combined9<-bp1+ bp2+ bp3+ bp4+ bp5+ bp6
+#Plot boxplots 1-6
+combined9 + plot_layout(guides="collect") + 
+  plot_annotation(title = 'Figure 2.c: Predictors by Playoff Status') & 
+  theme(plot.title = element_text(size=13, face='bold', hjust=0.5))
+```
+```{r echo=FALSE}
+#Combine boxplots 7-12
+combined10 <- bp7+ bp8+ bp9+ bp10+ bp11+ bp12
+#Plot boxplots 7-12
+combined10 + plot_layout(guides="collect") + 
+  plot_annotation() & 
+  theme(plot.title = element_text(size=13, face='bold', hjust=0.5))
+```
+
+The boxplots in Figure 2.c visualize the difference between teams who do and do not make the playoffs across the quantitative variables.
+
+Here, we still see noticeable differences between teams that do and do not make the playoffs across these variables.
+
+#### iii. Contextual interpretations of data visualizations
+
+Based on the visualizations, **`HRA`**, **`BBA`**, **`IPouts`**, **`SV`**, and **`OBP`** are the most powerful predictors of whether a team will make the playoffs. The boxplots show the difference in values between teams that make the playoffs and those that do not; there are differences between playoff and non-playoff teams for all predictors. Based on the above visualizations, teams that make it to the playoffs tend to have higher **`HR`**, **`OBP`**, and **`FP`** and fewer **`BBA`** and **`HRA`**.
+
+**`OBP`**, **`HR`**, **`HRA`**, and **`BBA`** appear to be the biggest factors in whether a team plays in the postseason because their distributions are the most different. Teams that make the playoffs tend to have a slightly higher **`FP`** and, interestingly, tend to have slightly less **`DP`** than their non-playoff counterparts. In contrast, distributions for offensive statistics seem to differ more drastically for playoff and non-playoff teams, suggesting that a strong offense may be more predictive of playoff status than a strong defense.
+
+Next, we create visualizations to see whether there are differences in **`HR`** and **`OBP`** by league and division.
+
+```{r echo=FALSE}
+ggplot(train, aes(x=Playoffs, y=OBP))+
+  geom_point(shape=16, size=1.1, color="#eb5f0c", fill="#eb5f0c", alpha=0.6)+
+  geom_boxplot(width=0.4, color="#141E3C", fill="#141E3C", alpha=0.1)+
+  facet_wrap(~lgIDdivID)+
+  theme_linedraw()+
+  theme(plot.title=element_text(size=14, face='bold', hjust=0.5),
+    axis.title.x=element_text(face='bold'), axis.title.y=element_text(face='bold'))+
+  labs(x="Playoffs", y="On Base Percentage", title="Figure 2.d: OBP by Playoffs Status")
+```
+
+```{r echo=FALSE}
+ggplot(train, aes(x=Playoffs, y=HR))+
+  geom_point(shape=16, size=1.1, color="#eb5f0c", fill="#eb5f0c", alpha=0.6)+
+  geom_boxplot(width=0.4, color="#141E3C", fill="#141E3C", alpha=0.1)+
+  facet_wrap(~lgIDdivID)+
+  theme_linedraw()+
+  theme(plot.title=element_text(size=14, face='bold', hjust=0.5),
+    axis.title.x=element_text(face='bold'), axis.title.y=element_text(face='bold'))+
+labs(x="Playoffs", y="Home runs", title="Figure 2.e: Home runs by Playoffs Status")
+```
+
+Based on Figure 2.d and Figure 2.e, we can see some differences in **`OBP`** and **`HR`** across divisions and playoff status. In particular, AL East appears to have the largest difference in distribution between non-playoff teams and playoff teams for both **`OBP`** and **`HR`**, suggesting that there may be some imbalance for teams in this league. Moreover, AL East playoff teams tend to have higher **`OBP`** and more **`HR`** by a large margin compared to other divisions, and AL East non-playoff teams tend to have more **`HR`** than other divisions. This suggests that AL East teams tend to outperform other divisions, regardless of playoff status. When we compare the distributions for the other five divisions considering **`OBP`** and **`HR`**, there tends to be less variation across divisions for both playoff and non-playoff teams. This suggests that division ID may not be a significant predictor in our model.
+
+### c. Model Building:
+
+#### i. How we chose our initial logistic regression model
+
+We chose to include predictors that a team owner or general manager has the power to influence, including various offensive and defensive statistics and team spend. We also included **`lgIDdivID`** to examine if a team's division has a statistically significant influence on its likelihood of making the playoffs in the presence of the other predictors. Given the nature of our question, we also excluded some predictors from our models. In this context, several predictors obviously influence playoff statuses, such as wins (**`W`**) and shutouts (**`SHO`**), that we have excluded. The relationship between wins and playoff status per the MLB regulations is well understood; we are more interested in the less obvious relationship between playoff status and other predictors.
+
+The predictors we ultimately decided to examine as possible model inputs include **`HR`**, **`HRA`**, **`IPouts`**, **`OBP`**, **`Spend`**, **`BBA`**, **`DP`**, **`SV`**, **`SOA`**, **`StealP`**, **`FP`**, and **`lgIDdivID`**.
+
+A team owner may be able to increase a team's home runs (**`HR`**) by strategically placing players with the highest likelihood of hitting home runs in certain spots in the batting order or by aligning the batting order in a specific sequence against certain pitchers. Similarly, an owner may reduce the number of home runs allowed (**`HRA`**) by employing certain pitching strategies against --- perhaps purposefully walking --- opponent batters with high likelihoods of hitting home runs. And, as is the idea behind "Moneyball," an owner may influence a team's chances of winning by maximizing its On-base percentage (**`OBP`**); for example, stacking a batting lineup with players that, despite not having great batting averages, are more likely to get on base, whether that be achieved by actually hitting the ball (**`H`**), being hit by a pitch (**`HBP`**), or being walked (**`BB`**). The box plots from our EDA show meaningful differences between teams that did and did not make it to the **`playoffs`** in terms of **`OBP`**, **`HR`**, and **`HRA`**.
+
+We also know contextually that team owners and general managers influence the amount of money a team spends in a given season (**`Spend`**), and in our EDA, we see a difference in median **`Spend`** by **`playoff`** status.
+
+Coaches may reduce the number of times an opponent catches their team stealing (**`CS`**) or increase the number of times a team successfully steals a base (**`SB`**) by calculating each player's percent chance of successfully stealing a base and determining a threshold below which players are simply barred from stealing. We include **`StealP`** as a team's percent chance of successfully stealing.
+
+The previously mentioned predictors are largely offensive. Some defensive predictors we chose to examine include **`BBA`**, **`DP`**, **`FP`**, **`HRA`**, **`SV`**, **`SOA`**, **`IPouts`**. A team owner may increase or decrease a team's **`BBA`** based on opponent batters' capabilities; for example, as previously mentioned, a pitcher might purposefully walk a batter with greater chances of hitting a home run. A pitcher might also purposefully not walk slower batters, assuming that doing so increases the chances of getting that batter out on his way to first.
+
+**Initial model**:
+
+```{r echo=FALSE}
+full<-glm(Playoffs ~ ., family="binomial", data=train)
+summary(full)
+```
+
+#### ii. How we tried to improve our initial logistic regression model
+
+The *full* model shows that **`HR`**, **`HRA`**, **`SV`**, **`BBA`**, **`SOA`**, and **`OBP`** are the only statistically significant predictors based on their respective p-values.
+
+Before removing any predictors, we use the *glmulti* package to perform all-subset logistic regressions to find the best model based on two separate penalized-fit criteria; the Akaike Information Criterion (AIC) and the Bayesian Information Criterion (BIC). AIC uses a penalty term proportional to the number of parameters in the model, while BIC uses a penalty term proportional to the logarithm of the sample size multiplied by the number of parameters. AIC makes sense as a criterion in the context of our dataset and question of interest because the sample size of the training data (568 observations) is large compared to the number of parameters under consideration (12). BIC makes sense as a criterion because it balances between goodness-of-fit and model complexity; further, given that we split our training and testing data in a 95-5 split, the sample size of our test data is much smaller than the training data, so only using AIC as the criteria could result in overfitting when we test the model. 
+
+The different criteria yield different models, the formulas and summaries of which are shown below:
+
+**AIC as criterion**:
+
+```{r echo=FALSE}
+glmulti.aic <- glmulti(Playoffs ~ ., data = train, level = 1, method = "h", crit = "aic",
+                       confsetsize = 1, plotty = F, report = F, fitfunction = "glm", family = binomial)
+glmulti.aic@formulas
+summary(glmulti.aic@objects[[1]])
+```
+
+**BIC as criterion**:
+
+```{r echo=FALSE}
+glmulti.bic <- glmulti(Playoffs ~ ., data = train, level = 1, method = "h", crit = "bic",
+                      confsetsize = 1, plotty = F, report = F, fitfunction = "glm", family = binomial)
+glmulti.bic@formulas
+summary(glmulti.bic@objects[[1]])
+```
+
+The AIC of the model produced using BIC as the criterion is slightly higher (356.43) than that of the model produced using AIC as the criterion (354.73).
+
+We fit two reduced models: *reduced1*, where we use the model recommended when using AIC as the criterion, and *reduced2*, where we use the model recommended when using BIC as the criterion.
+
+**reduced1**:
+
+```{r echo=FALSE}
+reduced1<-glm(Playoffs ~ HR + SV + HRA + BBA + SOA + OBP + FP + StealP, family="binomial", data=train)
+summary(reduced1)
+```
+
+**reduced2**:
+
+```{r echo=FALSE}
+reduced2<-glm(Playoffs ~ HR + SV + HRA + BBA + SOA + OBP, family="binomial", data=train)
+summary(reduced2)
+```
+
+We will compare three models: the initial, full model, *result*, and the reduced models, *reduced1* and *reduced2*.
+
+#### iii. Comparing model performance by ROC curve, AUC, and Accuracy rate:
+
+##### ROC curve
+
+Based on the ROC curves for the full and reduced models, we see that these models perform better at predicting playoff status than random guessing.
+
+```{r echo=FALSE}
+#full
+preds_full<-predict(full,newdata=test, type="response")
+preds_full[is.na(preds_full)] = 0
+rates_full<-prediction(preds_full, test$Playoffs)
+roc_result<-performance(rates_full,measure="tpr", x.measure="fpr")
+full_roc<-plot(roc_result, main="Figure 2.f: Full Model - ROC Curve for MLB Playoff Status, 2016")
+lines(x = c(0,1), y = c(0,1), col="red")
+
+#reduced1
+preds_reduced1<-predict(reduced1,newdata=test, type="response")
+preds_reduced1[is.na(preds_reduced1)] = 0
+rates_reduced1<-prediction(preds_reduced1, test$Playoffs)
+roc_reduced1<-performance(rates_reduced1,measure="tpr", x.measure="fpr")
+reduced1_roc<-plot(roc_reduced1, main="Figure 2.g: Reduced1 - ROC Curve for MLB Playoff Status, 2016")
+lines(x = c(0,1), y = c(0,1), col="red")
+
+#reduced2
+preds_reduced2<-predict(reduced2,newdata=test, type="response")
+preds_reduced2[is.na(preds_reduced2)] = 0
+rates_reduced2<-prediction(preds_reduced2, test$Playoffs)
+roc_reduced2<-performance(rates_reduced2,measure="tpr", x.measure="fpr")
+reduced2_roc<-plot(roc_reduced2, main="Figure 2.h: Reduced2 - ROC Curve for MLB Playoff Status, 2016")
+lines(x = c(0,1), y = c(0,1), col="red")
+```
+
+##### The Area Under the Curve (AUC)
+
+**full Model:** (0.895)
+
+**reduced1:** (0.925)
+
+**reduced2:** (0.920)
+
+The *full* model has a slightly higher AUC than both reduced models; however, the reduced models are much simpler and retrain almost all of the AUC from the *full* model. The *reduced2* model has slightly less AUC than *reduced1*. Next, we will check model accuracy.
+
+```{r include=FALSE}
+auc_full<-performance(rates_full, measure = "auc")
+auc_full@y.values
+
+auc_reduced1<-performance(rates_reduced1, measure = "auc")
+auc_reduced1@y.values
+
+auc_reduced2<-performance(rates_reduced2, measure = "auc")
+auc_reduced2@y.values
+```
+
+##### Accuracy rate
+
+**full:** The *full* model is 73.33% accurate at a threshold of 0.05.
+
+**reduced1:** The *reduced1* model is 86.67% accurate at a threshold of 0.05.
+
+**reduced2:** The *reduced2* model is 86.67% accurate at a threshold of 0.05.
+
+```{r include=FALSE}
+table(test$Playoffs, preds_full>0.5)
+Accuracy_full<-((15+7)/30)*100
+round(Accuracy_full, 2)
+
+table(test$Playoffs, preds_reduced1>0.5)
+Accuracy_reduced1<-((19+7)/30)*100
+round(Accuracy_reduced1, 2)
+
+table(test$Playoffs, preds_reduced2>0.5)
+Accuracy_reduced2<-((19+7)/30)*100
+round(Accuracy_reduced2, 2)
+```
+
+##### Other ways of comparison, if appropriate
+
+Given that our *reduced2* model is a subset of our *reduced1* model, we will also compare using a Likelihood Ratio Test (LRT).
+
+```{r echo=FALSE}
+lrt <- anova(reduced1, reduced2, test = "Chisq")
+lrt
+```
+
+The LRT compares the fit of the two models by testing the null hypothesis (Ho) that the *reduced1* model and the *reduced2* model fit the data equally well versus the alternative hypothesis (Ha) that the *reduced1* model fits the data significantly better than the *reduced2* model. We use the `anova` function to perform the LRT and the Chisq argument to specify the test type.
+
+The p-value is greater than 0.05, so we fail to reject the null hypothesis. From the LRT, we conclude that we can go with the *reduced2* model because adding **`StealP`** and **`FP`** does not significantly improve the model fit.
+
+The model summary for *reduced1* showed that **`StealP`** and **`IPouts`** were not statistically significant, which the LRT confirms. We will validate this with a hypothesis test, that is, adding **`StealP`** and **`FP`** as predictors to the *reduced2* model:
+
+- *Ho:* β7= β8 = 0.
+
+- *Ha:* at least one of the coefficients in Ho is not zero.
+
+We calculate a ∆G2 test statistic and compare it with a χ2 distribution with 2 degrees of freedom. The ∆G2 test statistic is the difference in the residual deviance of the *reduced1* model and that of the *reduced2* model.
+
+The test statistic is (4.500545), and the corresponding p-value is (0.1053705).
+
+The results of this test confirm the result of the LRT, so we conclude that **`StealP`** and **`FP`** do not significantly improve the model fit; we can go with the *reduced2* model.
+
+```{r include=FALSE}
+TS<-reduced2$deviance-reduced1$deviance
+TS
+
+1-pchisq(TS,2)
+```
+
+#### iv. Recommended logistic regression model(s)
+
+We recommend the *reduced2* model given:
+
+-   The *reduced2* model is much simpler than the *full* model.
+
+-   The *reduced2* model retains much of the *full* and *reduced1* models' AUC.
+
+-   The *reduced2* model has the same accuracy as the *reduced1* and better accuracy than the *full* model.
+
+In short, *reduced2* is highly accurate in its predictive capabilities and a relatively simple model.
+
+The final recommended logistic regression equation is:
+
+$$
+log(π/1-π) = -42.568375 + 0.020194(HR) + 0.156404(SV) - 0.043264(HRA) - 0.017359(BBA) + 0.005079(SOA) + 125.023473(OBP) + \epsilon
+$$
+
+### d. Conclusions:
+
+#### i. How our model(s) answers our question of interest
+
+Our recommended model for predicting 2016 playoff status includes the following predictors: **`HR`**, **`SV`**, **`HRA`**, **`BBA`**, **`SOA`**, and **`OBP`**.
+
+Of these variables, **`OBP`** is by far the most powerful predictor variable when reviewing the coefficients of our recommended model. For every additional percentage point increase in OBP, the estimated odds of that team progressing to the playoffs get multiplied by an estimated 3.49, assuming all other variables remain constant. Based on our data, this implies that general managers and coaches should have prioritized improving team OBP for the best playoff chances in 2016. Playoff status is consistent with the OBP theory in popular culture’s Moneyball.
+
+#### ii. Provide interesting insights gained about the data
+
+Similar to our recommended model for the linear regression in Question 1, our logistic regression model also drops **`Spend`** as a predictor, despite our initial visualizations showing a generally higher team spend for playoff teams compared to non-playoff teams. This remains a hotly debated topic in MLB today, with proponents for team salary caps and team salary floors to create some consistency in payroll across MLB teams to keep the league fair. However, at least for predicting 2016 playoff status, **`Spend`** is not statistically significant in the presence of our other predictors (in particular, **`OBP`**).
+
+Our recommended logistic regression model keeps much of the same predictors that we see have a large quantitative difference across our initial between playoff and non-playoff status teams across our initial set of predictors based on our preliminary visualizations. 
+
+#### iii. Challenges we faced
+
+Like the work done for the linear regression, the group spent a significant amount of time upfront researching and understanding these variables to understand their context in the game of baseball holistically and their context in potentially being used as predictors of a team's playoff appearance.
+
+In addition, it was challenging to narrow our scope to predictor variables that an owner or team manager would have some influence over, but the group was determined to create a model that would be useful in decision-making scenarios around team strategy to increase the likelihood of a team's playoff appearance. Ultimately, our model predicts the likelihood of playoff appearance using six quantitative predictors based on our understanding of these predictors and our use of various statistical methods. 
+
+---
+
+#### Sources:
+
+-   Lewis, M. (2003). Moneyball: *The art of winning an unfair game*. New York, NY: Norton.
+
+-   James, M., and Wells, A. (2008). Evaluating baseball performance: A study of the best measures for evaluating team performance. *Journal of Sports Economics*, 9(6), pp. 598-626.
+
+-   Pinheiro, R. and Szymanski, S. (2022). All runs are created equal: Labor market efficiency in Major League Baseball. *Journal of Sports Economics*, 23(8), pp. 1046-1075.
